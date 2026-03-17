@@ -1,0 +1,45 @@
+version: '3.9'
+
+services:
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  postgres:
+    image: postgres:16
+    container_name: postgres
+    environment:
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  api:
+    build: ./api-service
+    container_name: api-service
+    ports:
+      - "5030:5030"
+    depends_on:
+      - rabbitmq
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      RABBITMQ_HOST: rabbitmq
+
+  worker:
+    build: ./worker-service
+    container_name: worker-service
+    depends_on:
+      - rabbitmq
+      - postgres
+    environment:
+      DB_CONNECTION: Host=postgres;Username=postgres;Password=password;Database=postgres
+
+volumes:
+  postgres-data:
