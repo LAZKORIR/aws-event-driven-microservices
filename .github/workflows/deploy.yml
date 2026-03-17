@@ -1,0 +1,73 @@
+name: Deploy to AWS ECS
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  AWS_REGION: us-east-1
+  ECR_API_REPO: tia-api
+  ECR_WORKER_REPO: tia-worker
+  ECS_CLUSTER: tia-cluster
+  ECS_API_SERVICE: tia-api-service
+  ECS_WORKER_SERVICE: tia-worker-service
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build API image
+        run: |
+          docker build -t $ECR_API_REPO ./api-service
+
+      - name: Tag API image
+        run: |
+          docker tag $ECR_API_REPO:latest \
+          ${{ steps.login-ecr.outputs.registry }}/$ECR_API_REPO:latest
+
+      - name: Push API image
+        run: |
+          docker push ${{ steps.login-ecr.outputs.registry }}/$ECR_API_REPO:latest
+
+      - name: Build Worker image
+        run: |
+          docker build -t $ECR_WORKER_REPO ./worker-service
+
+      - name: Tag Worker image
+        run: |
+          docker tag $ECR_WORKER_REPO:latest \
+          ${{ steps.login-ecr.outputs.registry }}/$ECR_WORKER_REPO:latest
+
+      - name: Push Worker image
+        run: |
+          docker push ${{ steps.login-ecr.outputs.registry }}/$ECR_WORKER_REPO:latest
+
+      - name: Deploy API service
+        run: |
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $ECS_API_SERVICE \
+            --force-new-deployment
+
+      - name: Deploy Worker service
+        run: |
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $ECS_WORKER_SERVICE \
+            --force-new-deployment
