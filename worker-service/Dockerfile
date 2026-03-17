@@ -3,6 +3,11 @@ FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 
 WORKDIR /src
 
+# Copy csproj first (cache restore)
+COPY worker-service.csproj ./
+RUN dotnet restore
+
+# Copy rest
 COPY . .
 
 RUN dotnet publish -c Release -o /app
