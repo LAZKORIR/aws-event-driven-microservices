@@ -10,14 +10,18 @@ This project implements a complete **event-driven microservices architecture** u
 * **PostgreSQL (Amazon RDS)** for persistence
 * **AWS ECS (Fargate)** for container orchestration
 * **AWS ECR** for container registry
+* **Application Load Balancer (ALB)** for public access
+* **GitHub Actions** for CI/CD
 * **Terraform** for Infrastructure as Code
 
 ---
 
 ## 🏗️ Architecture
 
-```
+```id="8q8p4h"
 Client
+   ↓
+ALB (Public Endpoint)
    ↓
 API (ECS Fargate)
    ↓
@@ -30,6 +34,16 @@ PostgreSQL (RDS)
 
 ---
 
+## 🌐 Public API Access
+
+After deployment, access the API via:
+
+```id="6d3m2j"
+http://<ALB-DNS>/swagger/index.html
+```
+
+---
+
 ## ✅ Prerequisites
 
 Make sure you have:
@@ -38,7 +52,7 @@ Make sure you have:
 * Docker installed
 * Terraform installed
 * .NET 8 SDK (for local development)
-* VS Code (recommended)
+* GitHub account (for CI/CD)
 
 ---
 
@@ -46,7 +60,7 @@ Make sure you have:
 
 Start services using Docker Compose:
 
-```bash
+```bash id="6r4w2t"
 docker-compose up --build
 ```
 
@@ -62,25 +76,25 @@ Services:
 
 ### Navigate to Terraform folder
 
-```bash
+```bash id="tf1"
 cd terraform
 ```
 
 ### Initialize Terraform
 
-```bash
+```bash id="tf2"
 terraform init
 ```
 
 ### Review plan
 
-```bash
+```bash id="tf3"
 terraform plan
 ```
 
 ### Apply infrastructure
 
-```bash
+```bash id="tf4"
 terraform apply
 ```
 
@@ -95,7 +109,10 @@ yes
 ## 📦 Terraform Creates
 
 * VPC + Subnets + Internet Gateway
-* Security Group
+* Route Tables
+* Security Groups
+* **Application Load Balancer (ALB)**
+* Target Group + Listener
 * RDS PostgreSQL
 * Amazon MQ (RabbitMQ)
 * ECS Cluster
@@ -104,11 +121,9 @@ yes
 
 ---
 
-## 📤 Step 3 — Build Docker Images
+## 📤 Step 3 — Build Docker Images (Manual Option)
 
-From project root:
-
-```bash
+```bash id="bd1"
 docker build -t tia-api ./api-service
 docker build -t tia-worker ./worker-service
 ```
@@ -117,7 +132,7 @@ docker build -t tia-worker ./worker-service
 
 ## 🔐 Step 4 — Login to AWS ECR
 
-```bash
+```bash id="bd2"
 aws ecr get-login-password --region us-east-1 \
 | docker login --username AWS --password-stdin <account-id>.dkr.ecr.us-east-1.amazonaws.com
 ```
@@ -126,7 +141,7 @@ aws ecr get-login-password --region us-east-1 \
 
 ## 🏷️ Step 5 — Tag Images
 
-```bash
+```bash id="bd3"
 docker tag tia-api:latest <api_repository_url>:latest
 docker tag tia-worker:latest <worker_repository_url>:latest
 ```
@@ -135,7 +150,7 @@ docker tag tia-worker:latest <worker_repository_url>:latest
 
 ## 🚀 Step 6 — Push Images
 
-```bash
+```bash id="bd4"
 docker push <api_repository_url>:latest
 docker push <worker_repository_url>:latest
 ```
@@ -144,9 +159,7 @@ docker push <worker_repository_url>:latest
 
 ## 🔄 Step 7 — Restart ECS Services
 
-Force ECS to pull latest images:
-
-```bash
+```bash id="bd5"
 aws ecs update-service \
 --cluster tia-cluster \
 --service tia-api-service \
@@ -154,7 +167,7 @@ aws ecs update-service \
 --region us-east-1
 ```
 
-```bash
+```bash id="bd6"
 aws ecs update-service \
 --cluster tia-cluster \
 --service tia-worker-service \
@@ -164,7 +177,30 @@ aws ecs update-service \
 
 ---
 
-## 🔍 Step 8 — Verify Deployment
+## 🔄 Step 8 — CI/CD Deployment (Recommended)
+
+This project uses **GitHub Actions** to automate:
+
+* Build Docker images
+* Push to ECR
+* Deploy to ECS
+
+### Required GitHub Secrets:
+
+```id="gh1"
+AWS_ACCESS_KEY_ID
+AWS_SECRET_ACCESS_KEY
+```
+
+### Trigger deployment:
+
+```bash id="gh2"
+git push
+```
+
+---
+
+## 🔍 Step 9 — Verify Deployment
 
 Go to AWS Console:
 
@@ -180,16 +216,27 @@ Running tasks = 1
 
 ---
 
-## 🧪 Step 9 — Test Flow
+## 🧪 Step 10 — Test Flow
 
-1. Send request to API
-2. API publishes message to RabbitMQ
-3. Worker consumes message
-4. Worker stores result in PostgreSQL
+### 1. Open Swagger
+
+```bash id="ts1"
+http://<ALB-DNS>/swagger/index.html
+```
+
+### 2. Send request
+
+```json id="ts2"
+POST /send
+{
+  "name": "ComposerUser",
+  "message": "Hello System"
+}
+```
 
 ---
 
-## 📊 Step 10 — View Logs
+## 📊 Step 11 — View Logs
 
 ```
 ECS → Worker Service → Tasks → Logs
@@ -214,18 +261,20 @@ Saved to database
 
 ## ⚠️ Notes
 
-* API is not publicly exposed yet (no Load Balancer)
-* Security group allows all traffic (for demo purposes)
+* API is exposed via **Application Load Balancer (ALB)**
+* ALB performs health checks before routing traffic
+* ECS services run in a VPC with controlled access
 
 ---
 
 ## 🚀 Future Improvements
 
-* Add Application Load Balancer (public API access)
-* Use AWS Secrets Manager for credentials
-* Add CloudWatch logging
+* HTTPS (SSL via ACM)
+* Custom domain (Route53)
+* Use AWS Secrets Manager
+* Add CloudWatch logging dashboards
 * Enable auto-scaling for ECS services
-* Restrict security group rules
+* Add authentication (JWT)
 
 ---
 
@@ -233,7 +282,7 @@ Saved to database
 
 To destroy all resources:
 
-```bash
+```bash id="cl1"
 terraform destroy
 ```
 
@@ -243,16 +292,15 @@ terraform destroy
 
 This project demonstrates:
 
-* Event-driven architecture
-* Container orchestration with ECS
+* Event-driven microservices architecture
 * Messaging with RabbitMQ
-* Database integration with RDS
+* Container orchestration with ECS Fargate
+* CI/CD automation with GitHub Actions
 * Infrastructure as Code with Terraform
+* Production-ready API exposure using ALB
 
 ---
 
 ## 👨‍💻 Author
 
-Your Name
-
----
+Lazarus Korir

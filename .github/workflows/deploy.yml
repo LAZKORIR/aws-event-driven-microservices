@@ -1,4 +1,4 @@
-name: Deploy to AWS ECS
+name: Deploy to AWS
 
 on:
   push:
@@ -7,10 +7,8 @@ on:
 
 env:
   AWS_REGION: us-east-1
-  ECR_API_REPO: tia-api
   ECR_WORKER_REPO: tia-worker
   ECS_CLUSTER: tia-cluster
-  ECS_API_SERVICE: tia-api-service
   ECS_WORKER_SERVICE: tia-worker-service
 
 jobs:
@@ -18,7 +16,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
       # Checkout repo
       - name: Checkout code
         uses: actions/checkout@v4
@@ -31,32 +28,47 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # Login to ECR (FIXED)
-      - name: Login to ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
       ################################
-      # Build + Push API
+      # Build + Upload Windows API Artifact
       ################################
 
-      - name: Build API image
-        run: |
-          docker build -t $ECR_API_REPO ./api-service
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
 
-      - name: Tag API image
+      - name: Publish Windows API
         run: |
-          docker tag $ECR_API_REPO:latest \
-          ${{ steps.login-ecr.outputs.registry }}/$ECR_API_REPO:latest
+          dotnet publish ./api-service/api-service.csproj -c Release -o ./publish/api-service
 
-      - name: Push API image
+      - name: Zip Windows API artifact
         run: |
-          docker push \
-          ${{ steps.login-ecr.outputs.registry }}/$ECR_API_REPO:latest
+          cd ./publish/api-service
+          zip -r ../windows-service.zip .
+
+      - name: Upload Windows API artifact to S3
+        run: |
+          aws s3 cp ./publish/windows-service.zip s3://${{ secrets.ARTIFACTS_BUCKET }}/windows-service/windows-service.zip
+
+      - name: Refresh Windows API artifact on EC2
+        run: |
+          aws ssm send-command \
+            --instance-ids "${{ secrets.WINDOWS_EC2_INSTANCE_ID }}" \
+            --document-name "AWS-RunPowerShellScript" \
+            --parameters commands='[
+              "aws s3 cp s3://${{ secrets.ARTIFACTS_BUCKET }}/windows-service/windows-service.zip C:\\app\\windows-service.zip",
+              "Expand-Archive -Path C:\\app\\windows-service.zip -DestinationPath C:\\app -Force",
+              "Restart-Service TiaWindowsApi"
+            ]' \
+            --region $AWS_REGION
 
       ################################
       # Build + Push Worker
       ################################
+
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build Worker image
         run: |
@@ -65,24 +77,15 @@ jobs:
       - name: Tag Worker image
         run: |
           docker tag $ECR_WORKER_REPO:latest \
-          ${{ steps.login-ecr.outputs.registry }}/$ECR_WORKER_REPO:latest
+            ${{ steps.login-ecr.outputs.registry }}/$ECR_WORKER_REPO:latest
 
       - name: Push Worker image
         run: |
-          docker push \
-          ${{ steps.login-ecr.outputs.registry }}/$ECR_WORKER_REPO:latest
+          docker push ${{ steps.login-ecr.outputs.registry }}/$ECR_WORKER_REPO:latest
 
       ################################
-      # Deploy (Force ECS restart)
+      # Deploy Worker (Force ECS restart)
       ################################
-
-      - name: Deploy API service
-        run: |
-          aws ecs update-service \
-            --cluster $ECS_CLUSTER \
-            --service $ECS_API_SERVICE \
-            --force-new-deployment \
-            --region $AWS_REGION
 
       - name: Deploy Worker service
         run: |

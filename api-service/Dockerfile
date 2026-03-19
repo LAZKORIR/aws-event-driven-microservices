@@ -1,22 +1,19 @@
-# Stage 1 — Build
+# Local development only
+# The production API runs on Windows EC2 as a Windows service
+
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 
 WORKDIR /src
 
-# Copy only project file first (for caching)
 COPY api-service.csproj ./
 RUN dotnet restore
 
-# Copy everything else
 COPY . .
-
 RUN dotnet publish -c Release -o /app
 
-# Stage 2 — Runtime
 FROM mcr.microsoft.com/dotnet/aspnet:8.0
 
 WORKDIR /app
-
 COPY --from=build /app .
 
 ENV ASPNETCORE_URLS=http://+:5030

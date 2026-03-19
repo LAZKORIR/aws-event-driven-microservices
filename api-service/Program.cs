@@ -1,13 +1,17 @@
+using Amazon.SecretsManager;
+using Amazon.SecretsManager.Model;
 using RabbitMQ.Client;
+using RabbitMQ.Client.Exceptions;
+using System.Security.Authentication;
 using System.Text;
 using System.Text.Json;
 using api_service.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddSingleton<AmazonSecretsManagerClient>();
 
 var app = builder.Build();
 
@@ -17,40 +21,92 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.UseHttpsRedirection();
-
 var summaries = new[]
 {
     "Freezing","Bracing","Chilly","Cool","Mild",
     "Warm","Balmy","Hot","Sweltering","Scorching"
 };
 
-app.MapPost("/send", (RequestMessage request) =>
+app.MapGet("/", () => Results.Ok("API is running"));
+app.MapGet("/health", () => Results.Ok("Healthy"));
+
+app.MapPost("/send", async (RequestMessage request, AmazonSecretsManagerClient secretsClient) =>
 {
-    var factory = new ConnectionFactory()
-{
-    HostName = Environment.GetEnvironmentVariable("RABBITMQ_HOST") ?? "rabbitmq"
-};
+    try
+    {
+        var secretName = Environment.GetEnvironmentVariable("MQ_SECRET_NAME");
 
-    using var connection = factory.CreateConnection();
-    using var channel = connection.CreateModel();
+        if (string.IsNullOrWhiteSpace(secretName))
+        {
+            return Results.Problem("MQ_SECRET_NAME is not set.", statusCode: 500);
+        }
 
-    channel.QueueDeclare(
-        queue: "task-queue",
-        durable: false,
-        exclusive: false,
-        autoDelete: false);
+        var secretValue = await secretsClient.GetSecretValueAsync(new GetSecretValueRequest
+        {
+            SecretId = secretName
+        });
 
-    var message = JsonSerializer.Serialize(request);
-    var body = Encoding.UTF8.GetBytes(message);
+        if (string.IsNullOrWhiteSpace(secretValue.SecretString))
+        {
+            return Results.Problem("RabbitMQ secret is empty.", statusCode: 500);
+        }
 
-    channel.BasicPublish(
-        exchange: "",
-        routingKey: "task-queue",
-        basicProperties: null,
-        body: body);
+        var mqSecret = JsonSerializer.Deserialize<RabbitMqSecret>(secretValue.SecretString);
 
-    return Results.Ok("Message sent to queue");
+        if (mqSecret == null ||
+            string.IsNullOrWhiteSpace(mqSecret.Host) ||
+            string.IsNullOrWhiteSpace(mqSecret.Username) ||
+            string.IsNullOrWhiteSpace(mqSecret.Password))
+        {
+            return Results.Problem("RabbitMQ secret is missing values.", statusCode: 500);
+        }
+
+        var factory = new ConnectionFactory
+        {
+            HostName = mqSecret.Host,
+            UserName = mqSecret.Username,
+            Password = mqSecret.Password,
+            Port = 5671,
+            Ssl = new SslOption
+            {
+                Enabled = true,
+                Version = SslProtocols.Tls12,
+                ServerName = mqSecret.Host
+            }
+        };
+
+        using var connection = factory.CreateConnection();
+        using var channel = connection.CreateModel();
+
+        channel.QueueDeclare(
+            queue: "task-queue",
+            durable: true,
+            exclusive: false,
+            autoDelete: false,
+            arguments: null);
+
+        var message = JsonSerializer.Serialize(request);
+        var body = Encoding.UTF8.GetBytes(message);
+
+        var properties = channel.CreateBasicProperties();
+        properties.Persistent = true;
+
+        channel.BasicPublish(
+            exchange: "",
+            routingKey: "task-queue",
+            basicProperties: properties,
+            body: body);
+
+        return Results.Ok("Message sent to queue");
+    }
+    catch (BrokerUnreachableException ex)
+    {
+        return Results.Problem($"RabbitMQ unreachable: {ex.Message}", statusCode: 502);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem($"Unexpected error: {ex.Message}", statusCode: 500);
+    }
 });
 
 app.MapGet("/weatherforecast", () =>
@@ -67,6 +123,13 @@ app.MapGet("/weatherforecast", () =>
 .WithName("GetWeatherForecast");
 
 app.Run();
+
+public class RabbitMqSecret
+{
+    public string Host { get; set; } = string.Empty;
+    public string Username { get; set; } = string.Empty;
+    public string Password { get; set; } = string.Empty;
+}
 
 record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
 {

@@ -3,17 +3,35 @@ variable "region" {
 }
 
 variable "db_username" {
-  default = "postgres"
+  description = "RDS PostgreSQL master username"
+  type        = string
+  sensitive   = true
+  default     = "postgres"
 }
 
 variable "db_password" {
-  default = "PostgresPassword123!"
+  description = "RDS PostgreSQL master password (min 8 chars)"
+  type        = string
+  sensitive   = true
+  default     = "PostgresPassword123!"
 }
 
 variable "rabbitmq_username" {
-  default = "rabbitadmin"
+  description = "Amazon MQ RabbitMQ admin username"
+  type        = string
+  sensitive   = true
+  default     = "rabbitadmin"
 }
 
 variable "rabbitmq_password" {
-  default = "RabbitMQPassword123!"
+  description = "Amazon MQ RabbitMQ admin password (min 12 chars — Amazon MQ requirement)"
+  type        = string
+  sensitive   = true
+  default     = "RabbitMQPassword123!"
+}
+
+variable "windows_ec2_key_pair" {
+  description = "EC2 key pair name for RDP access. Leave empty to use SSM Session Manager only."
+  type        = string
+  default     = ""
 }
