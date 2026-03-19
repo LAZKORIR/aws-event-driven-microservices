@@ -123,7 +123,6 @@ app.MapGet("/weatherforecast", () =>
 .WithName("GetWeatherForecast");
 
 app.Run();
-
 public class RabbitMqSecret
 {
     public string Host { get; set; } = string.Empty;
