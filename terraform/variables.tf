@@ -31,7 +31,13 @@ variable "rabbitmq_password" {
 }
 
 variable "windows_ec2_key_pair" {
-  description = "EC2 key pair name for RDP access. Leave empty to use SSM Session Manager only."
+  description = "EC2 key pair name for Windows EC2 access"
   type        = string
-  default     = ""
+  default = "tia-key"
+}
+
+variable "admin_cidr" {
+  description = "Admin public IP/CIDR allowed to RDP to Windows EC2"
+  type        = string
+  default = "172.58.180.72/32"
 }

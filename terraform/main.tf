@@ -118,8 +118,8 @@ resource "aws_security_group" "windows_ec2" {
     from_port   = 3389
     to_port     = 3389
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "RDP restrict to admin CIDR in production"
+    cidr_blocks = [var.admin_cidr]
+    description = "RDP from admin CIDR only"
   }
 
   egress {
@@ -321,12 +321,8 @@ resource "aws_instance" "windows_api" {
   subnet_id              = aws_subnet.subnet1.id
   vpc_security_group_ids = [aws_security_group.windows_ec2.id]
   iam_instance_profile   = aws_iam_instance_profile.windows_ec2.name
-  key_name               = var.windows_ec2_key_pair != "" ? var.windows_ec2_key_pair : null
+  key_name               = var.windows_ec2_key_pair
 
-  # user_data runs once on first boot via EC2 Launch.
-  # setup-windows-service.ps1 installs .NET 10, downloads the app from S3,
-  # sets MQ_SECRET_NAME so the service knows which Secrets Manager secret to fetch,
-  # and registers + starts the Windows Service.
   user_data = base64encode(templatefile("${path.module}/../scripts/setup-windows-service.ps1", {
     s3_bucket   = aws_s3_bucket.artifacts.bucket
     s3_key      = "windows-service/windows-service.zip"
@@ -335,7 +331,10 @@ resource "aws_instance" "windows_api" {
 
   tags = { Name = "tia-windows-api" }
 
-  # Wait for MQ and secrets to exist before the instance boots and tries to use them
+  lifecycle {
+    create_before_destroy = true
+  }
+
   depends_on = [
     aws_mq_broker.rabbitmq,
     aws_secretsmanager_secret_version.rabbitmq

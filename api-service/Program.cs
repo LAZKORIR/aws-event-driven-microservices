@@ -15,11 +15,8 @@ builder.Services.AddSingleton<AmazonSecretsManagerClient>();
 
 var app = builder.Build();
 
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+app.UseSwagger();
+app.UseSwaggerUI();
 
 var summaries = new[]
 {
@@ -61,9 +58,15 @@ app.MapPost("/send", async (RequestMessage request, AmazonSecretsManagerClient s
             return Results.Problem("RabbitMQ secret is missing values.", statusCode: 500);
         }
 
+        var mqHost = mqSecret.Host;
+        if (mqHost.Contains(":"))
+        {
+            mqHost = mqHost.Split(':')[0];
+        }
+
         var factory = new ConnectionFactory
         {
-            HostName = mqSecret.Host,
+            HostName = mqHost,
             UserName = mqSecret.Username,
             Password = mqSecret.Password,
             Port = 5671,
@@ -71,7 +74,7 @@ app.MapPost("/send", async (RequestMessage request, AmazonSecretsManagerClient s
             {
                 Enabled = true,
                 Version = SslProtocols.Tls12,
-                ServerName = mqSecret.Host
+                ServerName = mqHost
             }
         };
 
@@ -123,6 +126,7 @@ app.MapGet("/weatherforecast", () =>
 .WithName("GetWeatherForecast");
 
 app.Run();
+
 public class RabbitMqSecret
 {
     public string Host { get; set; } = string.Empty;
