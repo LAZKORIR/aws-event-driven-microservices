@@ -346,6 +346,7 @@ Expand-Archive "C:\app\windows-service.zip" -DestinationPath "C:\app" -Force
 [System.Environment]::SetEnvironmentVariable("MQ_SECRET_NAME", "${aws_secretsmanager_secret.rabbitmq.name}", "Machine")
 [System.Environment]::SetEnvironmentVariable("ASPNETCORE_URLS", "http://+:80", "Machine")
 
+# CORRECT
 netsh advfirewall firewall add rule name=AllowHTTP80 dir=in action=allow protocol=TCP localport=80
 
 cmd /c sc create TiaWindowsApi binPath= "C:\app\api-service.exe" start= auto
