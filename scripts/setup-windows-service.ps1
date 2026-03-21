@@ -39,6 +39,11 @@ try {
     cmd /c 'sc create TiaWindowsApi binPath= "C:\app\api-service.exe" start= auto'
     cmd /c 'sc description TiaWindowsApi "TIA Windows API Service"'
 
+    # Open port 80 in Windows Firewall so ALB health checks and traffic can reach the service.
+    # The AWS security group alone is not enough — Windows Firewall is a separate layer.
+    Write-Output "Opening port 80 in Windows Firewall..."
+    netsh advfirewall firewall add rule name="Allow HTTP 80" dir=in action=allow protocol=TCP localport=80
+
     Write-Output "Starting Windows service..."
     cmd /c "sc start TiaWindowsApi"
     Start-Sleep -Seconds 8
