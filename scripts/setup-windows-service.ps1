@@ -14,7 +14,12 @@ try {
     New-Item -ItemType Directory -Force -Path "C:\app"
 
     Write-Output "Downloading app from S3..."
-    aws s3 cp "s3://${s3_bucket}/${s3_key}" "C:\app\windows-service.zip"
+    $awsExe = "C:\Program Files\Amazon\AWSCLIV2\aws.exe"
+    & $awsExe s3 cp "s3://${s3_bucket}/${s3_key}" "C:\app\windows-service.zip"
+    if (-not (Test-Path "C:\app\windows-service.zip")) {
+        throw "S3 download failed — windows-service.zip not found after download."
+    }
+    Write-Output "Download complete."
 
     Write-Output "Extracting app..."
     Expand-Archive "C:\app\windows-service.zip" -DestinationPath "C:\app" -Force
