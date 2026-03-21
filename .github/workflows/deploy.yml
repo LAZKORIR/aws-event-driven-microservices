@@ -56,14 +56,20 @@ jobs:
 
       - name: Refresh Windows API artifact on EC2
         run: |
+          INSTANCE_ID=$(aws ec2 describe-instances \
+            --filters \
+              "Name=tag:Name,Values=tia-windows-api" \
+              "Name=instance-state-name,Values=running" \
+            --query "Reservations[0].Instances[0].InstanceId" \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+
+          echo "Deploying to instance: $INSTANCE_ID"
+
           aws ssm send-command \
-            --instance-ids "${{ secrets.WINDOWS_EC2_INSTANCE_ID }}" \
+            --instance-ids "$INSTANCE_ID" \
             --document-name "AWS-RunPowerShellScript" \
-            --parameters commands='[
-              "aws s3 cp s3://${{ secrets.ARTIFACTS_BUCKET }}/windows-service/windows-service.zip C:\\app\\windows-service.zip",
-              "Expand-Archive -Path C:\\app\\windows-service.zip -DestinationPath C:\\app -Force",
-              "Restart-Service TiaWindowsApi"
-            ]' \
+            --cli-input-json "{\"InstanceIds\":[\"$INSTANCE_ID\"],\"DocumentName\":\"AWS-RunPowerShellScript\",\"Parameters\":{\"commands\":[\"\\\"C:\\\\Program Files\\\\Amazon\\\\AWSCLIV2\\\\aws.exe\\\" s3 cp s3://${{ secrets.ARTIFACTS_BUCKET }}/windows-service/windows-service.zip C:\\\\app\\\\windows-service.zip\",\"cmd /c sc stop TiaWindowsApi\",\"Start-Sleep -Seconds 3\",\"cmd /c sc delete TiaWindowsApi\",\"Start-Sleep -Seconds 3\",\"Expand-Archive -Path C:\\\\app\\\\windows-service.zip -DestinationPath C:\\\\app -Force\",\"cmd /c sc create TiaWindowsApi binPath= C:\\\\app\\\\api-service.exe start= auto\",\"netsh advfirewall firewall add rule name=\\\"Allow HTTP 80\\\" dir=in action=allow protocol=TCP localport=80\",\"cmd /c sc start TiaWindowsApi\"]}}" \
             --region ${{ env.AWS_REGION }}
 
       ################################
