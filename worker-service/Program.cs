@@ -123,9 +123,3 @@ void SaveToDatabase(RequestMessage data)
     cmd.Parameters.AddWithValue("message", data.Message);
     cmd.ExecuteNonQuery();
 }
-
-public class RequestMessage
-{
-    public string Name    { get; set; } = string.Empty;
-    public string Message { get; set; } = string.Empty;
-}
