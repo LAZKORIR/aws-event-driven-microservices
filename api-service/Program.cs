@@ -9,10 +9,7 @@ using api_service.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Required for the process to integrate with Windows Service Control Manager
 builder.Host.UseWindowsService();
-
-// Hardcode the URL so it binds on port 80 regardless of environment variables
 builder.WebHost.UseUrls("http://+:80");
 
 builder.Services.AddEndpointsApiExplorer();
@@ -50,7 +47,11 @@ app.MapPost("/send", async (RequestMessage request, AmazonSecretsManagerClient s
         if (string.IsNullOrWhiteSpace(secretValue.SecretString))
             return Results.Problem("RabbitMQ secret is empty.", statusCode: 500);
 
-        var mqSecret = JsonSerializer.Deserialize<RabbitMqSecret>(secretValue.SecretString);
+        // Case-insensitive so lowercase JSON keys (host, username, password)
+        // bind correctly to PascalCase C# properties (Host, Username, Password)
+        var mqSecret = JsonSerializer.Deserialize<RabbitMqSecret>(
+            secretValue.SecretString,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
         if (mqSecret == null ||
             string.IsNullOrWhiteSpace(mqSecret.Host) ||
@@ -126,7 +127,6 @@ app.MapGet("/weatherforecast", () =>
 .WithName("GetWeatherForecast");
 
 app.Run();
-
 
 public class RabbitMqSecret
 {
