@@ -86,10 +86,13 @@ jobs:
             sleep 10
           done
 
-          # Write SSM command to a JSON file to avoid shell quoting issues
-          cat > /tmp/ssm-command.json << EOF
-          {
-            "InstanceIds": ["$INSTANCE_ID"],
+          # Use Python to write the JSON to avoid shell escaping issues
+          python3 - << PYEOF
+          import json
+          bucket = "${{ secrets.ARTIFACTS_BUCKET }}"
+          instance_id = "$INSTANCE_ID"
+          payload = {
+            "InstanceIds": [instance_id],
             "DocumentName": "AWS-RunPowerShellScript",
             "Parameters": {
               "commands": [
@@ -97,7 +100,7 @@ jobs:
                 "Start-Sleep -Seconds 3",
                 "cmd /c sc delete TiaWindowsApi",
                 "Start-Sleep -Seconds 3",
-                "& \"C:\\Program Files\\Amazon\\AWSCLIV2\\aws.exe\" s3 cp s3://${{ secrets.ARTIFACTS_BUCKET }}/windows-service/windows-service.zip C:\\app\\windows-service.zip",
+                f'& "C:\\Program Files\\Amazon\\AWSCLIV2\\aws.exe" s3 cp s3://{bucket}/windows-service/windows-service.zip C:\\app\\windows-service.zip',
                 "Expand-Archive -Path C:\\app\\windows-service.zip -DestinationPath C:\\app -Force",
                 "cmd /c sc create TiaWindowsApi binPath= C:\\app\\api-service.exe start= auto",
                 "netsh advfirewall firewall add rule name=AllowHTTP80 dir=in action=allow protocol=TCP localport=80",
@@ -107,7 +110,12 @@ jobs:
               ]
             }
           }
-          EOF
+          with open("/tmp/ssm-command.json", "w") as f:
+            json.dump(payload, f)
+          print("JSON written successfully")
+          PYEOF
+
+          cat /tmp/ssm-command.json
 
           aws ssm send-command \
             --cli-input-json file:///tmp/ssm-command.json \
