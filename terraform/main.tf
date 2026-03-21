@@ -329,11 +329,33 @@ resource "aws_instance" "windows_api" {
   key_name = aws_key_pair.tia.key_name
   user_data_replace_on_change = true
 
-  user_data = base64encode(templatefile("${path.module}/../scripts/setup-windows-service.ps1", {
-    s3_bucket   = aws_s3_bucket.artifacts.bucket
-    s3_key      = "windows-service/windows-service.zip"
-    secret_name = aws_secretsmanager_secret.rabbitmq.name
-  }))
+  user_data = base64encode(<<-POWERSHELL
+<powershell>
+$ErrorActionPreference = "Stop"
+Start-Transcript -Path "C:\setup.log" -Append
+
+Invoke-WebRequest "https://awscli.amazonaws.com/AWSCLIV2.msi" -OutFile "C:\AWSCLIV2.msi"
+Start-Process msiexec.exe -ArgumentList '/i C:\AWSCLIV2.msi /quiet /norestart' -Wait
+
+$aws = "C:\Program Files\Amazon\AWSCLIV2\aws.exe"
+New-Item -ItemType Directory -Force -Path "C:\app"
+
+& $aws s3 cp "s3://${aws_s3_bucket.artifacts.bucket}/windows-service/windows-service.zip" "C:\app\windows-service.zip"
+Expand-Archive "C:\app\windows-service.zip" -DestinationPath "C:\app" -Force
+
+[System.Environment]::SetEnvironmentVariable("MQ_SECRET_NAME", "${aws_secretsmanager_secret.rabbitmq.name}", "Machine")
+[System.Environment]::SetEnvironmentVariable("ASPNETCORE_URLS", "http://+:80", "Machine")
+
+netsh advfirewall firewall add rule name=AllowHTTP80 dir=in action=allow protocol=TCP localport=80
+
+cmd /c sc create TiaWindowsApi binPath= "C:\app\api-service.exe" start= auto
+cmd /c sc description TiaWindowsApi "TIA Windows API Service"
+cmd /c sc start TiaWindowsApi
+
+Stop-Transcript
+</powershell>
+POWERSHELL
+)
 
   tags = { Name = "tia-windows-api" }
 
