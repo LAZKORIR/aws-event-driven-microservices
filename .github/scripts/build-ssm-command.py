@@ -21,6 +21,7 @@ payload = {
       "Start-Sleep -Seconds 3",
       f'& "{aws_exe}" s3 cp {s3_uri} {zip_path}',
       f"Expand-Archive -Path {zip_path} -DestinationPath {app_dir} -Force",
+      '[System.Environment]::SetEnvironmentVariable("MQ_SECRET_NAME", "tia/rabbitmq-credentials", "Machine")',
       f"cmd /c sc create TiaWindowsApi binPath= {exe_path} start= auto",
       "netsh advfirewall firewall add rule name=AllowHTTP80 dir=in action=allow protocol=TCP localport=80",
       "cmd /c sc start TiaWindowsApi",
