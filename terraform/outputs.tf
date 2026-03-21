@@ -53,3 +53,7 @@ output "db_secret_arn" {
   value       = aws_secretsmanager_secret.db.arn
   sensitive   = true
 }
+
+output "windows_ec2_console_command" {
+  value = "aws ec2 get-console-output --instance-id ${aws_instance.windows_api.id} --latest --region ${var.region}"
+}

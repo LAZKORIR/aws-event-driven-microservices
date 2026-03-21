@@ -16,11 +16,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Checkout repo
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Configure AWS credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -37,9 +35,14 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      - name: Publish Windows API
+      - name: Publish Windows API (self-contained, single exe)
         run: |
-          dotnet publish ./api-service/api-service.csproj -c Release -o ./publish/api-service
+          dotnet publish ./api-service/api-service.csproj \
+            -c Release \
+            -r win-x64 \
+            --self-contained true \
+            -p:PublishSingleFile=true \
+            -o ./publish/api-service
 
       - name: Zip Windows API artifact
         run: |
@@ -48,7 +51,8 @@ jobs:
 
       - name: Upload Windows API artifact to S3
         run: |
-          aws s3 cp ./publish/windows-service.zip s3://${{ secrets.ARTIFACTS_BUCKET }}/windows-service/windows-service.zip
+          aws s3 cp ./publish/windows-service.zip \
+            s3://${{ secrets.ARTIFACTS_BUCKET }}/windows-service/windows-service.zip
 
       - name: Refresh Windows API artifact on EC2
         run: |
@@ -60,7 +64,7 @@ jobs:
               "Expand-Archive -Path C:\\app\\windows-service.zip -DestinationPath C:\\app -Force",
               "Restart-Service TiaWindowsApi"
             ]' \
-            --region $AWS_REGION
+            --region ${{ env.AWS_REGION }}
 
       ################################
       # Build + Push Worker
@@ -71,8 +75,7 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build Worker image
-        run: |
-          docker build -t $ECR_WORKER_REPO ./worker-service
+        run: docker build -t $ECR_WORKER_REPO ./worker-service
 
       - name: Tag Worker image
         run: |
@@ -84,7 +87,7 @@ jobs:
           docker push ${{ steps.login-ecr.outputs.registry }}/$ECR_WORKER_REPO:latest
 
       ################################
-      # Deploy Worker (Force ECS restart)
+      # Deploy Worker
       ################################
 
       - name: Deploy Worker service
@@ -93,4 +96,4 @@ jobs:
             --cluster $ECS_CLUSTER \
             --service $ECS_WORKER_SERVICE \
             --force-new-deployment \
-            --region $AWS_REGION
+            --region ${{ env.AWS_REGION }}

@@ -9,6 +9,12 @@ using api_service.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Required for the process to integrate with Windows Service Control Manager
+builder.Host.UseWindowsService();
+
+// Hardcode the URL so it binds on port 80 regardless of environment variables
+builder.WebHost.UseUrls("http://+:80");
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddSingleton<AmazonSecretsManagerClient>();
@@ -34,9 +40,7 @@ app.MapPost("/send", async (RequestMessage request, AmazonSecretsManagerClient s
         var secretName = Environment.GetEnvironmentVariable("MQ_SECRET_NAME");
 
         if (string.IsNullOrWhiteSpace(secretName))
-        {
             return Results.Problem("MQ_SECRET_NAME is not set.", statusCode: 500);
-        }
 
         var secretValue = await secretsClient.GetSecretValueAsync(new GetSecretValueRequest
         {
@@ -44,9 +48,7 @@ app.MapPost("/send", async (RequestMessage request, AmazonSecretsManagerClient s
         });
 
         if (string.IsNullOrWhiteSpace(secretValue.SecretString))
-        {
             return Results.Problem("RabbitMQ secret is empty.", statusCode: 500);
-        }
 
         var mqSecret = JsonSerializer.Deserialize<RabbitMqSecret>(secretValue.SecretString);
 
@@ -60,9 +62,7 @@ app.MapPost("/send", async (RequestMessage request, AmazonSecretsManagerClient s
 
         var mqHost = mqSecret.Host;
         if (mqHost.Contains(":"))
-        {
             mqHost = mqHost.Split(':')[0];
-        }
 
         var factory = new ConnectionFactory
         {
@@ -114,10 +114,10 @@ app.MapPost("/send", async (RequestMessage request, AmazonSecretsManagerClient s
 
 app.MapGet("/weatherforecast", () =>
 {
-    var forecast = Enumerable.Range(1,5).Select(index =>
+    var forecast = Enumerable.Range(1, 5).Select(index =>
         new WeatherForecast(
             DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-            Random.Shared.Next(-20,55),
+            Random.Shared.Next(-20, 55),
             summaries[Random.Shared.Next(summaries.Length)]
         )).ToArray();
 

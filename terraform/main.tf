@@ -314,6 +314,11 @@ resource "aws_s3_bucket_versioning" "artifacts" {
   versioning_configuration { status = "Enabled" }
 }
 
+resource "aws_key_pair" "tia" {
+  key_name   = "tia-key"
+  public_key = file("tia-key.pub")
+}
+
 # The Windows EC2 instance itself.
 resource "aws_instance" "windows_api" {
   ami                    = data.aws_ami.windows_2022.id
@@ -321,7 +326,8 @@ resource "aws_instance" "windows_api" {
   subnet_id              = aws_subnet.subnet1.id
   vpc_security_group_ids = [aws_security_group.windows_ec2.id]
   iam_instance_profile   = aws_iam_instance_profile.windows_ec2.name
-  key_name               = var.windows_ec2_key_pair
+  key_name = aws_key_pair.tia.key_name
+  user_data_replace_on_change = true
 
   user_data = base64encode(templatefile("${path.module}/../scripts/setup-windows-service.ps1", {
     s3_bucket   = aws_s3_bucket.artifacts.bucket
