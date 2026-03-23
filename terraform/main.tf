@@ -19,7 +19,6 @@ resource "aws_vpc" "main" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_support   = true
   enable_dns_hostnames = true
-
   tags = { Name = "tia-vpc" }
 }
 
@@ -78,7 +77,6 @@ resource "aws_route_table_association" "subnet2" {
 # Security Groups
 ################################
 
-# ALB — unchanged, public HTTP ingress
 resource "aws_security_group" "alb" {
   name   = "tia-alb-sg"
   vpc_id = aws_vpc.main.id
@@ -98,10 +96,6 @@ resource "aws_security_group" "alb" {
   }
 }
 
-# CHANGE: new security group for the Windows EC2 instance.
-# Ingress port 80 is restricted to the ALB only — the EC2 is not directly
-# reachable from the internet on port 80.
-# RDP (3389) is open for admin access; restrict to a specific IP in production.
 resource "aws_security_group" "windows_ec2" {
   name   = "tia-windows-ec2-sg"
   vpc_id = aws_vpc.main.id
@@ -130,7 +124,6 @@ resource "aws_security_group" "windows_ec2" {
   }
 }
 
-# ECS worker — kept as-is; only the worker runs on ECS now (no more Linux api task)
 resource "aws_security_group" "ecs" {
   name   = "tia-ecs-sg"
   vpc_id = aws_vpc.main.id
@@ -151,7 +144,6 @@ resource "aws_security_group" "ecs" {
   }
 }
 
-# RDS — unchanged ingress (ECS worker only)
 resource "aws_security_group" "postgres" {
   name   = "tia-postgres-sg"
   vpc_id = aws_vpc.main.id
@@ -160,8 +152,8 @@ resource "aws_security_group" "postgres" {
     from_port       = 5432
     to_port         = 5432
     protocol        = "tcp"
-    security_groups = [aws_security_group.ecs.id]
-    description     = "PostgreSQL from ECS worker"
+    security_groups = [aws_security_group.ecs.id, aws_security_group.windows_ec2.id]
+    description     = "PostgreSQL from ECS worker and Windows EC2"
   }
 
   egress {
@@ -172,9 +164,6 @@ resource "aws_security_group" "postgres" {
   }
 }
 
-# CHANGE: added windows_ec2 SG to the RabbitMQ ingress rule.
-# Previously only the ECS worker could reach the broker.
-# Now the Windows service (EC2) also needs AMQPS access to publish messages.
 resource "aws_security_group" "rabbitmq" {
   name   = "tia-rabbitmq-sg"
   vpc_id = aws_vpc.main.id
@@ -185,7 +174,7 @@ resource "aws_security_group" "rabbitmq" {
     protocol  = "tcp"
     security_groups = [
       aws_security_group.ecs.id,
-      aws_security_group.windows_ec2.id   # ← new
+      aws_security_group.windows_ec2.id
     ]
     description = "AMQPS from ECS worker and Windows EC2"
   }
@@ -209,12 +198,6 @@ resource "aws_lb" "alb" {
   security_groups    = [aws_security_group.alb.id]
 }
 
-# CHANGE: replaced `tia-api-tg` (ECS/IP target) with `tia-windows-tg` (EC2/instance target).
-# The ALB now routes traffic to the Windows EC2 instance, not a Fargate container.
-# Key differences from the original:
-#   - port: 5030 → 80  (Windows service listens on port 80)
-#   - target_type: "ip" → "instance"  (EC2 instances use instance target type)
-#   - health_check path: "/" → "/health"  (dedicated health endpoint)
 resource "aws_lb_target_group" "windows_tg" {
   name        = "tia-windows-tg"
   port        = 80
@@ -233,7 +216,6 @@ resource "aws_lb_target_group" "windows_tg" {
   }
 }
 
-# CHANGE: listener now forwards to the Windows target group
 resource "aws_lb_listener" "listener" {
   load_balancer_arn = aws_lb.alb.arn
   port              = 80
@@ -241,18 +223,14 @@ resource "aws_lb_listener" "listener" {
 
   default_action {
     type             = "forward"
-    target_group_arn = aws_lb_target_group.windows_tg.arn  # ← was api_tg
+    target_group_arn = aws_lb_target_group.windows_tg.arn
   }
 }
 
 ################################
-# Windows EC2 — public-facing service
-# CHANGE: entire block is new — this is the Windows-based service
-#         required by the assignment (previously missing).
+# Windows EC2
 ################################
 
-# Resolve the latest Windows Server 2022 Full Base AMI automatically.
-# Hardcoding an AMI ID would break when AMIs are updated or in other regions.
 data "aws_ami" "windows_2022" {
   most_recent = true
   owners      = ["amazon"]
@@ -267,12 +245,8 @@ data "aws_ami" "windows_2022" {
   }
 }
 
-# Needed to make the S3 bucket name globally unique
 data "aws_caller_identity" "current" {}
 
-# IAM role for the Windows EC2 instance.
-# Grants SSM (for Session Manager access) + S3 read (for artifact downloads).
-# secrets.tf attaches the Secrets Manager read policy to this role as well.
 resource "aws_iam_role" "windows_ec2_role" {
   name = "tia-windows-ec2-role"
 
@@ -301,8 +275,6 @@ resource "aws_iam_instance_profile" "windows_ec2" {
   role = aws_iam_role.windows_ec2_role.name
 }
 
-# S3 bucket for Windows service deployment artifacts.
-# GitHub Actions publishes windows-service.zip here; the EC2 downloads it.
 resource "aws_s3_bucket" "artifacts" {
   bucket        = "tia-artifacts-${data.aws_caller_identity.current.account_id}"
   force_destroy = true
@@ -319,44 +291,68 @@ resource "aws_key_pair" "tia" {
   public_key = file("tia-key.pub")
 }
 
-# The Windows EC2 instance itself.
 resource "aws_instance" "windows_api" {
-  ami                    = data.aws_ami.windows_2022.id
-  instance_type          = "t3.small"
-  subnet_id              = aws_subnet.subnet1.id
-  vpc_security_group_ids = [aws_security_group.windows_ec2.id]
-  iam_instance_profile   = aws_iam_instance_profile.windows_ec2.name
-  key_name = aws_key_pair.tia.key_name
+  ami                         = data.aws_ami.windows_2022.id
+  instance_type               = "t3.small"
+  subnet_id                   = aws_subnet.subnet1.id
+  vpc_security_group_ids      = [aws_security_group.windows_ec2.id]
+  iam_instance_profile        = aws_iam_instance_profile.windows_ec2.name
+  key_name                    = aws_key_pair.tia.key_name
   user_data_replace_on_change = true
 
+  # NOTE: Use single backslash in PowerShell paths here.
+  # Terraform heredoc does not interpret backslashes — they pass through as-is.
+  # Do NOT double-escape backslashes in this block.
   user_data = base64encode(<<-POWERSHELL
 <powershell>
 $ErrorActionPreference = "Stop"
 Start-Transcript -Path "C:\setup.log" -Append
 
+Write-Output "Installing AWS CLI..."
 Invoke-WebRequest "https://awscli.amazonaws.com/AWSCLIV2.msi" -OutFile "C:\AWSCLIV2.msi"
 Start-Process msiexec.exe -ArgumentList '/i C:\AWSCLIV2.msi /quiet /norestart' -Wait
+Write-Output "AWS CLI installed."
 
 $aws = "C:\Program Files\Amazon\AWSCLIV2\aws.exe"
 New-Item -ItemType Directory -Force -Path "C:\app"
 
+Write-Output "Downloading artifact from S3..."
 & $aws s3 cp "s3://${aws_s3_bucket.artifacts.bucket}/windows-service/windows-service.zip" "C:\app\windows-service.zip"
-Expand-Archive "C:\app\windows-service.zip" -DestinationPath "C:\app" -Force
 
+if (-not (Test-Path "C:\app\windows-service.zip")) {
+  throw "S3 download failed - zip not found"
+}
+Write-Output "Download complete."
+
+Write-Output "Extracting..."
+Expand-Archive -Path "C:\app\windows-service.zip" -DestinationPath "C:\app" -Force
+
+Write-Output "Setting environment variables..."
 [System.Environment]::SetEnvironmentVariable("MQ_SECRET_NAME", "${aws_secretsmanager_secret.rabbitmq.name}", "Machine")
-[System.Environment]::SetEnvironmentVariable("ASPNETCORE_URLS", "http://+:80", "Machine")
 
-# CORRECT
+Write-Output "Opening firewall port 80..."
 netsh advfirewall firewall add rule name=AllowHTTP80 dir=in action=allow protocol=TCP localport=80
 
-cmd /c sc create TiaWindowsApi binPath= "C:\app\api-service.exe" start= auto
+Write-Output "Creating Windows service..."
+cmd /c sc create TiaWindowsApi binPath= C:\app\api-service.exe start= auto
 cmd /c sc description TiaWindowsApi "TIA Windows API Service"
-cmd /c sc start TiaWindowsApi
 
+Write-Output "Starting Windows service..."
+cmd /c sc start TiaWindowsApi
+Start-Sleep -Seconds 8
+
+$status = cmd /c sc query TiaWindowsApi
+Write-Output "Service status: $status"
+
+if ($status -notmatch "RUNNING") {
+  throw "Service failed to reach RUNNING state"
+}
+
+Write-Output "Setup complete. Service is RUNNING."
 Stop-Transcript
 </powershell>
 POWERSHELL
-)
+  )
 
   tags = { Name = "tia-windows-api" }
 
@@ -370,8 +366,6 @@ POWERSHELL
   ]
 }
 
-# Register the Windows EC2 instance with the ALB target group.
-# This is what connects the ALB listener → EC2 instance.
 resource "aws_lb_target_group_attachment" "windows" {
   target_group_arn = aws_lb_target_group.windows_tg.arn
   target_id        = aws_instance.windows_api.id
@@ -402,28 +396,22 @@ resource "aws_db_instance" "postgres" {
   username = var.db_username
   password = var.db_password
 
-  # CHANGE: was `true` — this is a security risk.
-  # The RDS instance was internet-accessible with a public IP.
-  # Only the ECS worker needs to reach it, and only via the
-  # tia-postgres-sg security group rule. Setting false means
-  # the endpoint resolves to a private IP inside the VPC only.
-  publicly_accessible = false
-
+  publicly_accessible    = false
   skip_final_snapshot    = true
   vpc_security_group_ids = [aws_security_group.postgres.id]
   db_subnet_group_name   = aws_db_subnet_group.postgres_subnet_group.name
 }
 
 ################################
-# Amazon MQ RabbitMQ — unchanged
+# Amazon MQ RabbitMQ
 ################################
 
 resource "aws_mq_broker" "rabbitmq" {
-  broker_name        = "tia-rabbitmq"
-  engine_type        = "RabbitMQ"
-  engine_version     = "3.13"
-  host_instance_type = "mq.t3.micro"
-  deployment_mode    = "SINGLE_INSTANCE"
+  broker_name         = "tia-rabbitmq"
+  engine_type         = "RabbitMQ"
+  engine_version      = "3.13"
+  host_instance_type  = "mq.t3.micro"
+  deployment_mode     = "SINGLE_INSTANCE"
   publicly_accessible = false
 
   subnet_ids      = [aws_subnet.subnet1.id]
@@ -439,11 +427,6 @@ resource "aws_mq_broker" "rabbitmq" {
 
 ################################
 # ECR
-# CHANGE: removed tia-api repository.
-# The Linux api-service container is no longer deployed to AWS —
-# the Windows EC2 service takes over the public-facing role.
-# The tia-api ECR repo is kept locally for docker-compose only;
-# it does not need to exist in AWS.
 ################################
 
 resource "aws_ecr_repository" "worker" {
@@ -452,8 +435,7 @@ resource "aws_ecr_repository" "worker" {
 }
 
 ################################
-# IAM Role for ECS — unchanged
-# (secrets.tf attaches the Secrets Manager policy to this role)
+# IAM Role for ECS
 ################################
 
 resource "aws_iam_role" "ecs_execution_role" {
@@ -475,7 +457,7 @@ resource "aws_iam_role_policy_attachment" "ecs_execution_role_policy" {
 }
 
 ################################
-# ECS Cluster — unchanged
+# ECS Cluster
 ################################
 
 resource "aws_ecs_cluster" "cluster" {
@@ -483,31 +465,7 @@ resource "aws_ecs_cluster" "cluster" {
 }
 
 ################################
-# CHANGE: removed aws_ecs_task_definition.api_task and
-#         aws_ecs_service.api_service entirely.
-# The Linux api-service no longer runs in AWS — Windows EC2 handles that role.
-################################
-
-################################
 # Worker Task Definition
-# CHANGE: replaced plaintext `environment` block with `secrets` block.
-#
-# Before:
-#   environment = [{ name = "DB_CONNECTION", value = "Host=...;Password=PLAINTEXT..." }]
-#
-# After:
-#   secrets = [{ name = "DB_CONNECTION", valueFrom = "<secret-arn>:connection_string::" }]
-#
-# The ECS agent fetches the value at task launch time using the execution role.
-# The connection string (with password) never appears in the task definition
-# JSON, Terraform state, or ECS console as readable text.
-#
-# CHANGE: added RABBITMQ_HOST, RABBITMQ_USER, RABBITMQ_PASS via secrets.
-# Previously only DB_CONNECTION was passed and RABBITMQ_HOST was hardcoded
-# to "rabbitmq" in the worker source code — which meant it could never
-# connect to Amazon MQ in production.
-#
-# CHANGE: added logConfiguration so worker logs go to CloudWatch.
 ################################
 
 resource "aws_ecs_task_definition" "worker_task" {
@@ -524,9 +482,6 @@ resource "aws_ecs_task_definition" "worker_task" {
       image     = "${aws_ecr_repository.worker.repository_url}:latest"
       essential = true
 
-      # Secrets Manager injection — ECS agent resolves these at task launch.
-      # Syntax: "<secret-arn>:<json-key>::" extracts a specific key from
-      # a JSON-format secret.
       secrets = [
         {
           name      = "DB_CONNECTION"
@@ -546,8 +501,6 @@ resource "aws_ecs_task_definition" "worker_task" {
         }
       ]
 
-      # Non-sensitive config — RABBITMQ_TLS=1 tells the worker to use port 5671 + TLS.
-      # Amazon MQ only accepts AMQPS; plain AMQP will be rejected.
       environment = [
         { name = "RABBITMQ_TLS", value = "1" }
       ]
@@ -564,15 +517,13 @@ resource "aws_ecs_task_definition" "worker_task" {
   ])
 }
 
-# CHANGE: new — CloudWatch log group for worker container output.
-# Without this the task definition's logConfiguration will fail to create log streams.
 resource "aws_cloudwatch_log_group" "worker" {
   name              = "/ecs/tia-worker"
   retention_in_days = 7
 }
 
 ################################
-# ECS Worker Service — unchanged
+# ECS Worker Service
 ################################
 
 resource "aws_ecs_service" "worker_service" {
